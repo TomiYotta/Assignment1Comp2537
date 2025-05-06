@@ -11,24 +11,36 @@ const path = require('path');
 const port = process.env.PORT || 3000;
 const app = express();
 
-// Validate environment variables (Essential for deployment)
+
+
+
+// Validate essential environment variables on startup
 if (!process.env.NODE_SESSION_SECRET || !process.env.MONGODB_SESSION_SECRET || !process.env.MONGODB_USER || !process.env.MONGODB_PASSWORD || !process.env.MONGODB_HOST || !process.env.MONGODB_DATABASE) {
-    console.error('FATAL ERROR: Session secrets or MongoDB connection details missing in environment variables.');
+    console.error('FATAL ERROR: Session secrets or MongoDB connection details missing in environment variables. Check Render Environment Variables.');
     process.exit(1);
 }
 
-/* Database Configuration */
+/* Database Configuration (Users) */
+// Ensure databaseConnection.js uses MONGODB_DATABASE and "?retryWrites=true&w=majority"
 const { database } = require('./databaseConnection');
 const userCollection = database.db(process.env.MONGODB_DATABASE).collection('users');
 
-// Session configuration
+// Session Configuration (Using a 'sessions' database)
+const sessionMongoUrl = `mongodb+srv://${process.env.MONGODB_USER}:${process.env.MONGODB_PASSWORD}@${process.env.MONGODB_HOST}/sessions?retryWrites=true&w=majority`;
+console.log(`Session Store URL: ${sessionMongoUrl.replace(process.env.MONGODB_PASSWORD, '********')}`); 
+
 const sessionStore = MongoStore.create({
-    mongoUrl: `mongodb+srv://${process.env.MONGODB_USER}:${process.env.MONGODB_PASSWORD}@${process.env.MONGODB_HOST}/${process.env.MONGODB_DATABASE || 'sessions'}?retryWrites=true&w=majority`, // Ensure DB name or default, added options
+    mongoUrl: sessionMongoUrl,
     crypto: {
         secret: process.env.MONGODB_SESSION_SECRET
     },
-    ttl: 60 * 60 
+    ttl: 60 * 60 // 1 hour in seconds
 });
+
+sessionStore.on('error', function(error) { 
+    console.error('Session Store Error:', error);
+});
+
 
 app.use(express.urlencoded({ extended: true }));
 app.use(express.static(path.join(__dirname, 'public')));
@@ -36,12 +48,13 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.use(session({
     secret: process.env.NODE_SESSION_SECRET,
     store: sessionStore,
-    saveUninitialized: false,
-    resave: false,
+    saveUninitialized: false, 
+    resave: false,            
     cookie: {
-        maxAge: 60 * 60 * 1000, // 1 hour
-        httpOnly: true,
-        secure: process.env.NODE_ENV === 'production' // Use secure cookies in production (HTTPS)
+        maxAge: 60 * 60 * 1000, 
+        httpOnly: true,       
+        secure: process.env.NODE_ENV === 'production', 
+        sameSite: 'lax' 
     }
 }));
 
@@ -59,10 +72,18 @@ function validateInput(schema) {
 
 // Authentication Check Middleware
 function isAuthenticated(req, res, next) {
+    console.log(`isAuthenticated Check for path: ${req.path}`);
+    console.log(`  Session ID: ${req.sessionID}`); 
+    console.log(`  Session Authenticated: ${req.session.authenticated}`); 
+
+
     if (req.session.authenticated) {
-        return next();
+        console.log(`  Authentication Check Passed.`);
+        return next(); // User is authenticated, proceed
+    } else {
+        console.log(`  Authentication Check Failed. Redirecting to /login.`);
+        res.redirect('/login'); 
     }
-    res.redirect('/login');
 }
 
 // Root route
@@ -100,8 +121,8 @@ app.get('/signup', (req, res) => {
 // Signup logic
 app.post('/signup',
     validateInput(Joi.object({
-        name: Joi.string().required(),
-        email: Joi.string().email().required(),
+        name: Joi.string().trim().required(), 
+        email: Joi.string().trim().email().required(), 
         password: Joi.string().min(8).required()
     })),
     async (req, res) => {
@@ -115,19 +136,31 @@ app.post('/signup',
             const result = await userCollection.insertOne({
                 name: name,
                 email: email,
-                password: hashedPassword
+                password: hashedPassword,
+                createdAt: new Date() // Good practice to add timestamp
             });
-            req.session.authenticated = true;
-            req.session.username = name;
-            req.session.userId = result.insertedId;
-            console.log(`Session set for ${name} after signup.`); 
-            req.session.save(err => {
+
+            // Regenerate session ID upon login/signup for security
+            req.session.regenerate(err => {
                 if (err) {
-                    console.error("Session save error on signup:", err);
-                    return res.status(500).send('Error creating user session.');
+                    console.error("Session regeneration error on signup:", err);
+                     return res.status(500).send('Error setting up user session.');
                 }
-                console.log("Session saved, redirecting to /parrots");
-                res.redirect('/parrots');
+
+                // Set session data AFTER regenerating
+                req.session.authenticated = true;
+                req.session.username = name;
+                req.session.userId = result.insertedId;
+                console.log(`Session regenerated and set for ${name} after signup. New Session ID: ${req.sessionID}`);
+
+                req.session.save(err => {
+                    if (err) {
+                        console.error("Session save error after regeneration on signup:", err);
+                        return res.status(500).send('Error creating user session.');
+                    }
+                    console.log("Session saved successfully after regeneration, redirecting to /parrots");
+                    res.redirect('/parrots');
+                });
             });
         } catch (err) {
             console.error("Signup Error:", err);
@@ -152,7 +185,7 @@ app.get('/login', (req, res) => {
 // Login logic
 app.post('/login',
     validateInput(Joi.object({
-        email: Joi.string().email().required(),
+        email: Joi.string().trim().email().required(), 
         password: Joi.string().required()
     })),
     async (req, res) => {
@@ -160,31 +193,40 @@ app.post('/login',
         try {
             const user = await userCollection.findOne({ email: email });
             if (!user || !(await bcrypt.compare(password, user.password))) {
+                console.warn(`Login attempt failed for email: ${email}`);
                 return res.status(401).send('Invalid email or password. <a href="/login">Try again</a>');
             }
-            req.session.authenticated = true;
-            req.session.username = user.name;
-            req.session.userId = user._id;
-            console.log(`Session set for ${user.name} after login.`); 
-             req.session.save(err => { 
+
+            // Regenerate session ID upon login for security
+             req.session.regenerate(err => {
                 if (err) {
-                    console.error("Session save error on login:", err);
-                     return res.status(500).send('Login session could not be saved.');
-                 }
-                 console.log("Session saved, redirecting to /parrots");
-                res.redirect('/parrots');
+                    console.error("Session regeneration error on login:", err);
+                    return res.status(500).send('Error setting up user session.');
+                }
+                req.session.authenticated = true;
+                req.session.username = user.name;
+                req.session.userId = user._id; 
+                console.log(`Session regenerated and set for ${user.name} after login. New Session ID: ${req.sessionID}`);
+                 req.session.save(err => {
+                    if (err) {
+                        console.error("Session save error after regeneration on login:", err);
+                         return res.status(500).send('Login session could not be saved.');
+                     }
+                     console.log("Session saved successfully after regeneration, redirecting to /parrots");
+                    res.redirect('/parrots');
+                });
             });
         } catch (err) {
             console.error("Login Error:", err);
-            res.status(500).send('Login failed');
+            res.status(500).send('Login failed due to server error.');
         }
     }
 );
 
 // Protected route
 app.get('/parrots', isAuthenticated, (req, res) => {
-    console.log(`Accessed /parrots route. User: ${req.session.username}, Authenticated: ${req.session.authenticated}`); 
-    const images = ['parrot.jpeg', 'parrot2.jpeg', 'parrot3.jpg'];
+    console.log(`Rendering /parrots page for User: ${req.session.username}, Session ID: ${req.sessionID}`);
+    const images = ['parrot.jpeg', 'parrot2.jpeg', 'parrot3.jpg']; 
     const randomImage = images[Math.floor(Math.random() * images.length)];
     res.send(`
         <h1>Welcome, ${req.session.username}!</h1>
@@ -197,31 +239,35 @@ app.get('/parrots', isAuthenticated, (req, res) => {
 
 // Logout route
 app.get('/logout', (req, res) => {
-    const username = req.session.username; 
+    const username = req.session.username;
+    const sessionID = req.sessionID;
     req.session.destroy(err => {
         if (err) {
-            console.error("Logout Error:", err);
+            console.error(`Logout Error for Session ID ${sessionID}:`, err);
         } else {
-            console.log(`User ${username} logged out.`); 
+            console.log(`User ${username} (Session ID: ${sessionID}) logged out and session destroyed.`);
         }
-        res.clearCookie('connect.sid');
+        // Clear the cookie on the client side
+        res.clearCookie('connect.sid', { path: '/' }); 
         res.redirect('/');
     });
 });
 
 // Error handling middleware
 app.use((err, req, res, next) => {
-    console.error(err.stack);
+    console.error("Unhandled Error caught by middleware:", err.stack);
     res.status(500).send('Something broke!');
 });
 
-// 404 handler
+// 404 handler (place AFTER all other routes)
 app.use((req, res) => {
+    console.log(`404 Not Found: ${req.method} ${req.originalUrl}`);
     res.status(404).send('Page not found - 404');
 });
 
 // Start server
 app.listen(port, () => {
     console.log(`Server running on port ${port}`);
-    console.log(`Attempting to connect to MongoDB: ${process.env.MONGODB_HOST}`);
+    console.log(`NODE_ENV: ${process.env.NODE_ENV}`);
+    console.log(`Attempting to connect to user DB on host: ${process.env.MONGODB_HOST}`);
 });
