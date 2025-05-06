@@ -3,7 +3,6 @@ require("./utils.js"); // Uncomment if you have a utils.js file
 require('dotenv').config();
 
 const express = require('express');
-app.set('trust proxy', 1); // Trust the first proxy (Render's proxy)
 const session = require('express-session');
 const MongoStore = require('connect-mongo');
 const bcrypt = require('bcryptjs');
@@ -14,6 +13,7 @@ const { connectToDatabase } = require('./databaseConnection'); // Import the con
 
 const port = process.env.PORT || 3000;
 const app = express();
+app.set('trust proxy', 1); // Trust the first proxy (Render's proxy)
 
 const saltRounds = 12;
 const expireTime = 1 * 60 * 60 * 1000; // 1 hour
