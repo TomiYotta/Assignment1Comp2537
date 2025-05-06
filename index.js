@@ -23,7 +23,7 @@ const userCollection = database.db(process.env.MONGODB_DATABASE).collection('use
 
 // Session configuration
 const sessionStore = MongoStore.create({
-    mongoUrl: `mongodb+srv://${process.env.MONGODB_USER}:${process.env.MONGODB_PASSWORD}@${process.env.MONGODB_HOST}/sessions`,
+    mongoUrl: `mongodb+srv://${process.env.MONGODB_USER}:${process.env.MONGODB_PASSWORD}@${process.env.MONGODB_HOST}/sessions?retryWrites=true&w=majority`,
     crypto: {
         secret: process.env.MONGODB_SESSION_SECRET
     },
