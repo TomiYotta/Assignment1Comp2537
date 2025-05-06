@@ -1,4 +1,4 @@
-require("./utils.js");
+// require("./utils.js"); // Uncomment if you have a utils.js file
 require('dotenv').config();
 
 const express = require('express');
@@ -11,9 +11,9 @@ const path = require('path');
 const port = process.env.PORT || 3000;
 const app = express();
 
-// Validate environment variables
-if (!process.env.NODE_SESSION_SECRET || !process.env.MONGODB_SESSION_SECRET) {
-    console.error('FATAL ERROR: Session secrets not configured in .env file');
+// Validate environment variables (Essential for deployment)
+if (!process.env.NODE_SESSION_SECRET || !process.env.MONGODB_SESSION_SECRET || !process.env.MONGODB_USER || !process.env.MONGODB_PASSWORD || !process.env.MONGODB_HOST || !process.env.MONGODB_DATABASE) {
+    console.error('FATAL ERROR: Session secrets or MongoDB connection details missing in environment variables.');
     process.exit(1);
 }
 
@@ -23,7 +23,7 @@ const userCollection = database.db(process.env.MONGODB_DATABASE).collection('use
 
 // Session configuration
 const sessionStore = MongoStore.create({
-    mongoUrl: `mongodb+srv://${process.env.MONGODB_USER}:${process.env.MONGODB_PASSWORD}@${process.env.MONGODB_HOST}/sessions?retryWrites=true&w=majority`,
+    mongoUrl: `mongodb+srv://${process.env.MONGODB_USER}:${process.env.MONGODB_PASSWORD}@${process.env.MONGODB_HOST}/${process.env.MONGODB_DATABASE || 'sessions'}?retryWrites=true&w=majority`, // Ensure DB name or default, added options
     crypto: {
         secret: process.env.MONGODB_SESSION_SECRET
     },
@@ -39,124 +39,172 @@ app.use(session({
     saveUninitialized: false,
     resave: false,
     cookie: {
-        maxAge: 60 * 60 * 1000, 
+        maxAge: 60 * 60 * 1000, // 1 hour
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production'
+        secure: process.env.NODE_ENV === 'production' // Use secure cookies in production (HTTPS)
     }
 }));
 
+// Input Validation Middleware
 function validateInput(schema) {
     return (req, res, next) => {
         const { error } = schema.validate(req.body);
         if (error) {
-            console.log(error.details);
-            return res.status(400).send(error.details[0].message);
+            console.error("Validation Error:", error.details);
+            return res.status(400).send(`Invalid input: ${error.details[0].message}. <a href="javascript:history.back()">Go Back</a>`);
         }
         next();
     };
 }
 
-app.get('/', (req, res) => {
+// Authentication Check Middleware
+function isAuthenticated(req, res, next) {
     if (req.session.authenticated) {
-        return res.send(`
-            <a href="/signup">Sign Up</a>
-            <a href="/login">Login</a>
-        `);
+        return next();
     }
-    res.send(`
-        <a href="/signup">Sign Up</a>
-        <a href="/login">Login</a>
-    `);
+    res.redirect('/login');
+}
+
+// Root route
+app.get('/', (req, res) => {
+    let navLinks;
+    if (req.session.authenticated) {
+        navLinks = `
+            <p>Hello, ${req.session.username}!</p>
+            <a href="/parrots">Parrots Page</a><br>
+            <a href="/logout">Logout</a>
+        `;
+    } else {
+        navLinks = `
+            <a href="/signup">Sign Up</a><br>
+            <a href="/login">Login</a>
+        `;
+    }
+    res.send(`<h1>Home</h1>${navLinks}`);
 });
 
+// Signup form
 app.get('/signup', (req, res) => {
     res.send(`
         <h1>Sign Up</h1>
         <form action="/signup" method="post">
-            <input name="name" placeholder="Name" required>
-            <input name="email" type="email" placeholder="Email" required>
-            <input name="password" type="password" placeholder="Password" required>
+            <input name="name" placeholder="Name" required><br>
+            <input name="email" type="email" placeholder="Email" required><br>
+            <input name="password" type="password" placeholder="Password (min 8 chars)" required><br>
             <button type="submit">Submit</button>
         </form>
+        <a href="/login">Already have an account? Login</a>
     `);
 });
 
-app.post('/signup', 
+// Signup logic
+app.post('/signup',
     validateInput(Joi.object({
         name: Joi.string().required(),
         email: Joi.string().email().required(),
         password: Joi.string().min(8).required()
     })),
     async (req, res) => {
+        const { name, email, password } = req.body;
         try {
-            const hashedPassword = await bcrypt.hash(req.body.password, 12);
-            await userCollection.insertOne({
-                name: req.body.name,
-                email: req.body.email,
+            const existingUser = await userCollection.findOne({ email: email });
+            if (existingUser) {
+                return res.status(409).send('Email already in use. <a href="/login">Login</a>');
+            }
+            const hashedPassword = await bcrypt.hash(password, 12);
+            const result = await userCollection.insertOne({
+                name: name,
+                email: email,
                 password: hashedPassword
             });
-            
             req.session.authenticated = true;
-            req.session.username = req.body.name;
-            res.redirect('/parrots');
+            req.session.username = name;
+            req.session.userId = result.insertedId;
+            console.log(`Session set for ${name} after signup.`); 
+            req.session.save(err => {
+                if (err) {
+                    console.error("Session save error on signup:", err);
+                    return res.status(500).send('Error creating user session.');
+                }
+                console.log("Session saved, redirecting to /parrots");
+                res.redirect('/parrots');
+            });
         } catch (err) {
-            console.error(err);
+            console.error("Signup Error:", err);
             res.status(500).send('Error creating user');
         }
     }
 );
 
+// Login form
 app.get('/login', (req, res) => {
     res.send(`
         <h1>Login</h1>
         <form action="/login" method="post">
-            <input name="email" type="email" placeholder="Email" required>
-            <input name="password" type="password" placeholder="Password" required>
+            <input name="email" type="email" placeholder="Email" required><br>
+            <input name="password" type="password" placeholder="Password" required><br>
             <button type="submit">Login</button>
         </form>
+        <a href="/signup">Don't have an account? Sign Up</a>
     `);
 });
 
-app.post('/login', 
+// Login logic
+app.post('/login',
     validateInput(Joi.object({
         email: Joi.string().email().required(),
         password: Joi.string().required()
     })),
     async (req, res) => {
+        const { email, password } = req.body;
         try {
-            const user = await userCollection.findOne({ email: req.body.email });
-            if (!user || !(await bcrypt.compare(req.body.password, user.password))) {
-                return res.status(401).send('Invalid email or password');
+            const user = await userCollection.findOne({ email: email });
+            if (!user || !(await bcrypt.compare(password, user.password))) {
+                return res.status(401).send('Invalid email or password. <a href="/login">Try again</a>');
             }
-            
             req.session.authenticated = true;
             req.session.username = user.name;
-            res.redirect('/parrots');
+            req.session.userId = user._id;
+            console.log(`Session set for ${user.name} after login.`); 
+             req.session.save(err => { 
+                if (err) {
+                    console.error("Session save error on login:", err);
+                     return res.status(500).send('Login session could not be saved.');
+                 }
+                 console.log("Session saved, redirecting to /parrots");
+                res.redirect('/parrots');
+            });
         } catch (err) {
-            console.error(err);
+            console.error("Login Error:", err);
             res.status(500).send('Login failed');
         }
     }
 );
 
-app.get('/parrots', (req, res) => {
-    if (!req.session.authenticated) {
-        return res.redirect('/login');
-    }
-    
+// Protected route
+app.get('/parrots', isAuthenticated, (req, res) => {
+    console.log(`Accessed /parrots route. User: ${req.session.username}, Authenticated: ${req.session.authenticated}`); 
     const images = ['parrot.jpeg', 'parrot2.jpeg', 'parrot3.jpg'];
     const randomImage = images[Math.floor(Math.random() * images.length)];
-    
     res.send(`
         <h1>Welcome, ${req.session.username}!</h1>
+        <p>Enjoy a random parrot:</p>
         <img src="/images/${randomImage}" alt="Random parrot" style="max-width: 500px;">
+        <br><br>
         <a href="/logout">Logout</a>
     `);
 });
 
+// Logout route
 app.get('/logout', (req, res) => {
+    const username = req.session.username; 
     req.session.destroy(err => {
-        if (err) console.error(err);
+        if (err) {
+            console.error("Logout Error:", err);
+        } else {
+            console.log(`User ${username} logged out.`); 
+        }
+        res.clearCookie('connect.sid');
         res.redirect('/');
     });
 });
@@ -175,6 +223,5 @@ app.use((req, res) => {
 // Start server
 app.listen(port, () => {
     console.log(`Server running on port ${port}`);
-    console.log(`Connected to MongoDB: ${process.env.MONGODB_HOST}`);
+    console.log(`Attempting to connect to MongoDB: ${process.env.MONGODB_HOST}`);
 });
-
