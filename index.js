@@ -1,5 +1,5 @@
 // server.js
-// require("./utils.js"); // Uncomment if you have a utils.js file
+require("./utils.js"); // Uncomment if you have a utils.js file
 require('dotenv').config();
 
 const express = require('express');
