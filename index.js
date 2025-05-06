@@ -1,59 +1,54 @@
-// require("./utils.js"); // Your original utils if needed
+require("./utils.js"); 
 require('dotenv').config();
 
 const express = require('express');
 const session = require('express-session');
 const MongoStore = require('connect-mongo');
-const bcrypt = require('bcryptjs'); // Using bcryptjs from your code
+const bcrypt = require('bcryptjs'); 
 const Joi = require("joi");
-const path = require('path'); // For express.static
+const path = require('path'); 
 
 const port = process.env.PORT || 3000;
 const app = express();
 
-const saltRounds = 12; // From sample, for bcryptjs
-const expireTime = 1 * 60 * 60 * 1000; // 1 hour, matching your cookie's maxAge
+const saltRounds = 12; 
+const expireTime = 1 * 60 * 60 * 1000; 
 
-/* --- Your Secret Information Section (from your .env) --- */
 const mongodb_host = process.env.MONGODB_HOST;
 const mongodb_user = process.env.MONGODB_USER;
 const mongodb_password = process.env.MONGODB_PASSWORD;
-const mongodb_database = process.env.MONGODB_DATABASE; // Your main app DB
+const mongodb_database = process.env.MONGODB_DATABASE; 
 const mongodb_session_secret = process.env.MONGODB_SESSION_SECRET;
 const node_session_secret = process.env.NODE_SESSION_SECRET;
 /* --- END Secret Information Section --- */
 
-// Validate environment variables (Essential for deployment)
+// Validate environment variables 
 if (!node_session_secret || !mongodb_session_secret || !mongodb_user || !mongodb_password || !mongodb_host || !mongodb_database) {
     console.error('FATAL ERROR: Session secrets or MongoDB connection details missing. Check Render Env Vars & local .env');
     process.exit(1);
 }
 
 /* --- Database Connection --- */
-// Assuming your databaseConnection.js correctly sets up and exports 'database' client
-// Ensure it uses MONGODB_DATABASE for the main connection and adds "?retryWrites=true&w=majority"
 const { database } = require('./databaseConnection'); // Your original way
-const userCollection = database.db(mongodb_database).collection('users'); // Using your main app DB for users
+const userCollection = database.db(mongodb_database).collection('users'); 
 /* --- END Database Connection --- */
 
 
-// Middleware to parse URL-encoded bodies (as sent by HTML forms)
-// Using extended: false from the sample, though true is often more flexible
+// Middleware
 app.use(express.urlencoded({ extended: false }));
 
 // Serve static files (CSS, images, client-side JS)
 app.use(express.static(path.join(__dirname, 'public')));
 
 
-/* --- Session Configuration (Adopting sample's MongoStore setup style) --- */
+/* --- Session Configuration -----*/
 var mongoStore = MongoStore.create({
-    // Storing sessions in a 'sessions' collection within your main app DB
-    // OR you can specify a different DB for sessions like: `mongodb+srv://${mongodb_user}:${mongodb_password}@${mongodb_host}/sessions_db?retryWrites=true&w=majority`
-    mongoUrl: `mongodb+srv://${mongodb_user}:${mongodb_password}@${mongodb_host}/${mongodb_database}?retryWrites=true&w=majority`, // Pointing to your main DB, sessions will be in a 'sessions' collection there.
+  
+    mongoUrl: `mongodb+srv://${mongodb_user}:${mongodb_password}@${mongodb_host}/${mongodb_database}?retryWrites=true&w=majority`,
     crypto: {
         secret: mongodb_session_secret
     },
-    touchAfter: 24 * 3600 // Optional: time period in seconds after which session will be updated even if not modified
+    touchAfter: 24 * 3600 
 });
 
 mongoStore.on('error', function(error) {
@@ -63,21 +58,17 @@ mongoStore.on('error', function(error) {
 app.use(session({
     secret: node_session_secret,
     store: mongoStore,
-    saveUninitialized: false, // Good practice: Don't save new sessions that are not modified
-    resave: true,             // FROM SAMPLE: Forces save even if not modified. Can cause race conditions. Test with false later if this works.
+    saveUninitialized: false, 
+    resave: true,            
     cookie: {
-        maxAge: expireTime, // Use the expireTime variable
+        maxAge: expireTime, 
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production', // Critical for HTTPS deployment
-        sameSite: 'lax' // Good default for CSRF protection
+        secure: process.env.NODE_ENV === 'production', 
+        sameSite: 'lax' 
     }
 }));
-/* --- END Session Configuration --- */
 
-
-// --- Your Routes Adapted ---
-
-// Input Validation Middleware (Your original)
+// Input Validation Middleware
 function validateInput(schema) {
     return (req, res, next) => {
         const { error } = schema.validate(req.body);
@@ -89,7 +80,7 @@ function validateInput(schema) {
     };
 }
 
-// Authentication Check Middleware (Your original)
+// Authentication Check Middleware 
 function isAuthenticated(req, res, next) {
     console.log(`isAuthenticated Check for path: ${req.path}, Session ID: ${req.sessionID}, Authenticated: ${req.session.authenticated}`);
     if (req.session.authenticated) {
@@ -99,7 +90,7 @@ function isAuthenticated(req, res, next) {
     res.redirect('/login');
 }
 
-// Root route (Your original)
+// Root route 
 app.get('/', (req, res) => {
     let navLinks;
     if (req.session.authenticated) {
@@ -117,7 +108,7 @@ app.get('/', (req, res) => {
     res.send(`<h1>Home</h1>${navLinks}`);
 });
 
-// Signup form (Your original)
+// Signup form 
 app.get('/signup', (req, res) => {
     res.send(`
         <h1>Sign Up</h1>
@@ -131,7 +122,7 @@ app.get('/signup', (req, res) => {
     `);
 });
 
-// Signup logic (Your original, adapted to use 'email' for login identity)
+// Signup logic 
 app.post('/signup',
     validateInput(Joi.object({
         name: Joi.string().trim().required(),
@@ -141,27 +132,25 @@ app.post('/signup',
     async (req, res) => {
         const { name, email, password } = req.body;
         try {
-            const existingUser = await userCollection.findOne({ email: email }); // Check by email
+            const existingUser = await userCollection.findOne({ email: email }); 
             if (existingUser) {
                 return res.status(409).send('Email already in use. <a href="/login">Login</a>');
             }
-            const hashedPassword = await bcrypt.hash(password, saltRounds); // Using saltRounds from sample
+            const hashedPassword = await bcrypt.hash(password, saltRounds);
             const result = await userCollection.insertOne({
-                name: name, // Storing full name
-                email: email, // Storing email
+                name: name, 
+                email: email, 
                 password: hashedPassword,
                 createdAt: new Date()
             });
 
             // Set session data
             req.session.authenticated = true;
-            req.session.username = name; // Store user's name in session for display
-            req.session.email = email; // Store user's email in session (optional, if needed later)
+            req.session.username = name; 
+            req.session.email = email;
             req.session.userId = result.insertedId;
-            // req.session.cookie.maxAge = expireTime; // Set by initial config, but sample did it here
-
             console.log(`Signup successful for ${name} (${email}). Session ID: ${req.sessionID}. Redirecting...`);
-            // With resave:true, session should save automatically before redirect
+
             res.redirect('/parrots');
 
         } catch (err) {
@@ -171,7 +160,7 @@ app.post('/signup',
     }
 );
 
-// Login form (Your original)
+// Login form 
 app.get('/login', (req, res) => {
     res.send(`
         <h1>Login</h1>
@@ -184,16 +173,16 @@ app.get('/login', (req, res) => {
     `);
 });
 
-// Login logic (Your original, adapted to use 'email')
+// Login logic 
 app.post('/login',
-    validateInput(Joi.object({ // Using your Joi validation
+    validateInput(Joi.object({ 
         email: Joi.string().trim().email().required(),
         password: Joi.string().required()
     })),
     async (req, res) => {
         const { email, password } = req.body;
         try {
-            const user = await userCollection.findOne({ email: email }); // Find by email
+            const user = await userCollection.findOne({ email: email }); 
             if (!user) {
                 console.log(`Login attempt: User with email ${email} not found.`);
                 return res.status(401).send('Invalid email or password. <a href="/login">Try again</a>');
@@ -201,13 +190,11 @@ app.post('/login',
 
             if (await bcrypt.compare(password, user.password)) {
                 req.session.authenticated = true;
-                req.session.username = user.name; // Store user's name
-                req.session.email = user.email;   // Store user's email
+                req.session.username = user.name; 
+                req.session.email = user.email;   
                 req.session.userId = user._id;
-                // req.session.cookie.maxAge = expireTime; // Set by initial config, but sample did it here
 
                 console.log(`Login successful for ${user.name} (${user.email}). Session ID: ${req.sessionID}. Redirecting...`);
-                // With resave:true, session should save automatically before redirect
                 res.redirect('/parrots');
             } else {
                 console.log(`Login attempt: Incorrect password for email ${email}.`);
@@ -220,7 +207,7 @@ app.post('/login',
     }
 );
 
-// Protected route (Your original)
+// Protected route 
 app.get('/parrots', isAuthenticated, (req, res) => {
     console.log(`Rendering /parrots page for User: ${req.session.username}, Session ID: ${req.sessionID}`);
     const images = ['parrot.jpeg', 'parrot2.jpeg', 'parrot3.jpg'];
@@ -234,24 +221,24 @@ app.get('/parrots', isAuthenticated, (req, res) => {
     `);
 });
 
-// Logout route (Your original style, sample was simpler)
+// Logout route 
 app.get('/logout', (req, res) => {
     const username = req.session.username;
     const sessionID = req.sessionID;
-    req.session.destroy(err => { // Destroys session in store and clears req.session
+    req.session.destroy(err => { 
         if (err) {
             console.error(`Logout Error for Session ID ${sessionID}:`, err);
         } else {
             console.log(`User ${username} (Session ID: ${sessionID}) logged out and session destroyed.`);
         }
-        res.clearCookie('connect.sid', { path: '/' }); // Good practice to also clear client-side cookie
+        res.clearCookie('connect.sid', { path: '/' }); 
         res.redirect('/');
     });
 });
 
 
-// Fallback 404 (Your original)
-app.use((req, res, next) => { // Changed to app.use for a catch-all before generic error handler
+// Fallback 404 
+app.use((req, res, next) => { 
     res.status(404).send('Page not found - 404');
 });
 
