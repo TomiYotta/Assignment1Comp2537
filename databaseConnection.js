@@ -9,7 +9,7 @@ const mongodb_password = process.env.MONGODB_PASSWORD;
 const mongodb_database_name = process.env.MONGODB_DATABASE;
 
 if (!mongodb_host || !mongodb_user || !mongodb_password || !mongodb_database_name) {
-    console.error("FATAL ERROR: MongoDB connection details (host, user, password, or database name) missing in .env for databaseConnection.js");
+    console.error("FATAL ERROR DB_CONN: MongoDB connection details (host, user, password, or database name) missing in .env for databaseConnection.js");
     process.exit(1);
 }
 
@@ -43,5 +43,4 @@ async function connectToDatabase() {
     }
 }
 
-// Export the function to connect and the client instance if needed for graceful shutdown elsewhere
 module.exports = { connectToDatabase, clientInstance: client };

@@ -39,8 +39,8 @@ if (!node_session_secret || !mongodb_session_secret || !mongodb_user || !mongodb
 let userCollection; // Will be initialized after DB connection
 let dbInstance;     // Will store the connected DB object
 
-app.use(express.urlencoded({ extended: false }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.urlencoded({ extended: false })); // Parse URL-encoded bodies
+app.use(express.static(path.join(__dirname, 'public'))); // Serve static files
 
 /* --- Session Configuration --- */
 // Sessions will be stored in a 'sessions' collection within the MONGODB_DATABASE
@@ -53,7 +53,7 @@ const mongoStore = MongoStore.create({
     crypto: {
         secret: mongodb_session_secret
     },
-    touchAfter: 24 * 3600,
+    touchAfter: 24 * 3600, // time period in seconds
 });
 
 mongoStore.on('create', (sessionId) => console.log(`SESSION_STORE_EVENT: Session created in store: ${sessionId}`));
@@ -65,12 +65,12 @@ app.use(session({
     secret: node_session_secret,
     store: mongoStore,
     saveUninitialized: false,
-    resave: false, // Good practice
+    resave: false, // Good practice; we use explicit save
     cookie: {
         maxAge: expireTime,
         httpOnly: true,
-        secure: process.env.NODE_ENV === 'production',
-        sameSite: 'lax'
+        secure: process.env.NODE_ENV === 'production', // Crucial for HTTPS
+        sameSite: 'lax' // Good default for CSRF protection
     }
 }));
 console.log("SERVER: Express-session middleware configured.");
@@ -84,18 +84,21 @@ if (process.env.NODE_ENV === 'production') {
 
 // Input Validation Middleware
 function validateInput(schema) {
-    const { error } = schema.validate(req.body);
-    if (error) {
-        console.error("SERVER: Validation Error:", error.details);
-        return res.status(400).send(`Invalid input: ${error.details[0].message}. <a href="javascript:history.back()">Go Back</a>`);
-    }
-    next();
+    return (req, res, next) => {
+        const { error } = schema.validate(req.body);
+        if (error) {
+            console.error("SERVER: Validation Error:", error.details.map(d => d.message).join(', '));
+            // Sending a more user-friendly message, but logging details
+            return res.status(400).send(`Invalid input: ${error.details[0].message}. <a href="javascript:history.back()">Go Back</a>`);
+        }
+        next();
+    };
 }
 
 // Authentication Check Middleware
 function isAuthenticated(req, res, next) {
-    console.log(`SERVER: isAuthenticated Check for path: ${req.path}, Session ID: ${req.sessionID}, Authenticated: ${req.session.authenticated}`);
-    if (req.session && req.session.authenticated) { // Added check for req.session existence
+    console.log(`SERVER: isAuthenticated Check for path: ${req.path}, Session ID: ${req.sessionID}, Authenticated: ${req.session ? req.session.authenticated : 'N/A (no session)'}`);
+    if (req.session && req.session.authenticated) {
         console.log(`SERVER: Auth check PASSED for ${req.session.username || 'user'}`);
         return next();
     }
@@ -137,7 +140,7 @@ app.get('/signup', (req, res) => {
 
 // Signup logic
 app.post('/signup',
-    validateInput(Joi.object({
+    validateInput(Joi.object({ // Applying validation
         name: Joi.string().trim().required(),
         email: Joi.string().trim().email().required(),
         password: Joi.string().min(8).required()
@@ -204,7 +207,7 @@ app.get('/login', (req, res) => {
 
 // Login logic
 app.post('/login',
-    validateInput(Joi.object({
+    validateInput(Joi.object({ // Applying validation
         email: Joi.string().trim().email().required(),
         password: Joi.string().required()
     })),
@@ -271,8 +274,8 @@ app.get('/parrots', isAuthenticated, (req, res) => {
 
 // Logout route
 app.get('/logout', (req, res) => {
-    const username = req.session ? req.session.username : 'unknown_user'; // Handle case where session might be undefined
-    const sessionID = req.sessionID;
+    const username = req.session ? req.session.username : 'unknown_user';
+    const sessionID = req.sessionID; // req.sessionID will exist even if req.session is null after destroy
     if (req.session) {
         req.session.destroy(err => {
             if (err) {
@@ -280,27 +283,28 @@ app.get('/logout', (req, res) => {
             } else {
                 console.log(`SERVER: User ${username} (Session ID: ${sessionID}) logged out and session destroyed.`);
             }
-            res.clearCookie('connect.sid', { path: '/' });
+            // It's good practice to clear the cookie on the client-side as well.
+            res.clearCookie('connect.sid', { path: '/' }); // Ensure path matches how it was set
             res.redirect('/');
         });
     } else {
-        // No session to destroy, just clear cookie and redirect
-        console.log(`SERVER: Logout attempt with no active session (Session ID: ${sessionID}).`);
+        // This case should ideally not happen if a session was established.
+        console.log(`SERVER: Logout attempt with no active session (Session ID: ${sessionID}). Clearing cookie.`);
         res.clearCookie('connect.sid', { path: '/' });
         res.redirect('/');
     }
 });
 
 
-// Fallback 404
+// Fallback 404 (should be after all other specific routes)
 app.use((req, res, next) => {
     console.log(`SERVER: 404 Not Found: ${req.method} ${req.originalUrl}`);
     res.status(404).send('Page not found - 404');
 });
 
-// Generic Error handling middleware
+// Generic Error handling middleware (should be last app.use())
 app.use((err, req, res, next) => {
-    console.error("SERVER: Unhandled Error in middleware:", err.stack);
+    console.error("SERVER: Unhandled Error in middleware/route:", err.stack);
     res.status(500).send('Something broke on the server!');
 });
 
@@ -309,17 +313,17 @@ app.use((err, req, res, next) => {
 async function startServer() {
     try {
         console.log("SERVER_START: Attempting to connect to database via connectToDatabase()...");
-        dbInstance = await connectToDatabase(); // Get the connected DB object
+        dbInstance = await connectToDatabase();
         if (!dbInstance) {
             console.error("SERVER_START: connectToDatabase() did not return a valid DB instance. Exiting.");
             process.exit(1);
         }
-        userCollection = dbInstance.collection('users');
+        userCollection = dbInstance.collection('users'); // Initialize userCollection here
         console.log("SERVER_START: User collection initialized successfully.");
 
         app.listen(port, () => {
             console.log(`SERVER_START: Node application listening on port ${port}`);
-            console.log(`SERVER_START: NODE_ENV: ${process.env.NODE_ENV}`);
+            console.log(`SERVER_START: NODE_ENV: ${process.env.NODE_ENV}`); // Will show 'production' on Render if set
             console.log(`SERVER_START: User DB configured for: ${mongodb_database_for_users} on host ${mongodb_host}`);
             const checkSessionUrl = sessionMongoUrl.replace(mongodb_password, '****');
             console.log(`SERVER_START: Session store configured for URL: ${checkSessionUrl}`);
