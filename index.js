@@ -3,6 +3,7 @@ require("./utils.js"); // Uncomment if you have a utils.js file
 require('dotenv').config();
 
 const express = require('express');
+app.set('trust proxy', 1); // Trust the first proxy (Render's proxy)
 const session = require('express-session');
 const MongoStore = require('connect-mongo');
 const bcrypt = require('bcryptjs');
