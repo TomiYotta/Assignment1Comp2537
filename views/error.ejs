@@ -1,18 +1,30 @@
+<!-- views/error.ejs (Modified to handle optional linkText/linkHref) -->
 <%- include('templates/header', { title: title || "Error", authenticated: authenticated, username: username, user_type: user_type }) %>
 
 <div class="alert alert-danger mt-4" role="alert">
     <h4 class="alert-heading"><%= title || "An Error Occurred" %></h4>
-    <% if (statusCode) { %>
+
+    <% if (typeof statusCode !== 'undefined' && statusCode) { %> <!-- Check if statusCode is passed and has a value -->
         <p><strong>Status Code: <%= statusCode %></strong></p>
     <% } %>
+
     <p><%= message %></p>
     <hr>
-    <% if (linkText && linkHref) { %>
-        <p class="mb-0"><a href="<%= linkHref %>" class="alert-link"><%= linkText %></a> or <a href="javascript:history.back()" class="alert-link">Go Back</a></p>
+
+    <% if (typeof linkText !== 'undefined' && typeof linkHref !== 'undefined' && linkText && linkHref) { %>
+        <p class="mb-0">
+            <a href="<%= linkHref %>" class="alert-link"><%= linkText %></a> or
+            <a href="javascript:history.back()" class="alert-link">Go Back</a>
+        </p>
     <% } else { %>
-        <p class="mb-0"><a href="javascript:history.back()" class="alert-link">Go Back</a> or <a href="/" class="alert-link">Return to Homepage</a></p>
+        <p class="mb-0">
+            <a href="javascript:history.back()" class="alert-link">Go Back</a> or
+            <a href="/" class="alert-link">Return to Homepage</a>
+        </p>
     <% } %>
 </div>
-<br><br><br> <!-- Extra space before footer -->
+
+<!-- Optional: Add some bottom margin if your footer isn't fixed or if content is short -->
+<div style="margin-bottom: 100px;"></div>
 
 <%- include('templates/footer') %>
