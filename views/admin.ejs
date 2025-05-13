@@ -1,0 +1,47 @@
+<%- include('templates/header', { title: title, authenticated: authenticated, username: username, user_type: user_type }) %>
+
+<h1 class="mb-4">Admin Panel - User Management</h1>
+
+<% if (users && users.length > 0) { %>
+    <div class="table-responsive">
+        <table class="table table-striped table-hover">
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Email</th>
+                    <th>User Type</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                <% users.forEach(function(user) { %>
+                    <tr>
+                        <td><%= user.name %></td>
+                        <td><%= user.email %></td>
+                        <td><span class="badge bg-<%= user.user_type === 'admin' ? 'success' : 'secondary' %>"><%= user.user_type %></span></td>
+                        <td>
+                            <% if (user.user_type === 'user') { %>
+                                <form action="/admin/promote/<%= user._id %>" method="post" style="display: inline;">
+                                    <button type="submit" class="btn btn-sm btn-success">Promote to Admin</button>
+                                </form>
+                            <% } else { %>
+                                <% if (user._id.toString() !== locals.userId) { %> <!-- Prevent admin from demoting self easily; you might want more robust logic for last admin -->
+                                <form action="/admin/demote/<%= user._id %>" method="post" style="display: inline;">
+                                    <button type="submit" class="btn btn-sm btn-warning">Demote to User</button>
+                                </form>
+                                <% } else { %>
+                                    <span class="text-muted">(Current Admin)</span>
+                                <% } %>
+                            <% } %>
+                        </td>
+                    </tr>
+                <% }); %>
+            </tbody>
+        </table>
+    </div>
+<% } else { %>
+    <p>No users found in the system.</p>
+<% } %>
+<br><br><br> <!-- Extra space before footer -->
+
+<%- include('templates/footer') %>

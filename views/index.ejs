@@ -1,0 +1,16 @@
+<%- include('templates/header', { title: title, authenticated: authenticated, username: username, user_type: user_type }) %>
+
+<div class="p-5 mb-4 bg-light rounded-3">
+    <div class="container-fluid py-5">
+        <h1 class="display-5 fw-bold">Welcome to the Parrot Site!</h1>
+        <p class="col-md-8 fs-4">This is the home page. Please explore the site using the navigation bar.</p>
+        <% if (authenticated) { %>
+            <p>Hello, <strong><%= username %></strong>! You are logged in.</p>
+            <a href="/parrots" class="btn btn-primary btn-lg">View Parrots</a>
+        <% } else { %>
+            <p>Please <a href="/login">login</a> or <a href="/signup">sign up</a> to continue.</p>
+        <% } %>
+    </div>
+</div>
+
+<%- include('templates/footer') %>
